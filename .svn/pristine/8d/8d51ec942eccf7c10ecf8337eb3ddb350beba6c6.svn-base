@@ -1,0 +1,3 @@
+#spider
+spider.url=http://www.toutiao.com/api/pc/feed/?category=news_hot&utm_source=toutiao&widen=1&&tadrequire=true
+spider.folder=/Users/chenghaijiang/Downloads/spider

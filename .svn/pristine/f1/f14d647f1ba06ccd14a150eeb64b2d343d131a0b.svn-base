@@ -1,0 +1,44 @@
+package com.qbao.config;
+
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.mybatis.spring.SqlSessionTemplate;
+
+/**
+ * @author song.j
+ * @create 2017-09-12 16:16:06
+ **/
+public class DbFactory {
+
+
+    /**
+     * 用sqlsessiontemplate更安全
+     *
+     * @param tClass
+     * @param <T>
+     * @return
+     */
+    public static <T> T createBean(Class<T> tClass) {
+        return createBean(tClass, null);
+    }
+
+    /**
+     * 用sqlsessiontemplate更安全
+     *
+     * @param tClass
+     * @param <T>
+     * @return
+     */
+    public static <T> T createBean(Class<T> tClass, DataSourceEnvironment dataSourceEnvironment) {
+        return getSqlSessionTemplate(getSqlSessionFactory(dataSourceEnvironment)).getMapper(tClass);
+    }
+
+    public static SqlSessionTemplate getSqlSessionTemplate(SqlSessionFactory sqlSessionFactory) {
+        return new SqlSessionTemplate(sqlSessionFactory);
+    }
+
+
+    public static SqlSessionFactory getSqlSessionFactory(DataSourceEnvironment dataSourceEnvironment) {
+        return SqlSessionFactoryBuild.getSqlSessionFactory(dataSourceEnvironment);
+    }
+
+}

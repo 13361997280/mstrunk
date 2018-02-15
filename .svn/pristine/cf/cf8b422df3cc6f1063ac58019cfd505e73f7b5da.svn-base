@@ -1,0 +1,92 @@
+package data.service;
+
+import com.alibaba.fastjson.JSON;
+import com.qbao.search.conf.Config;
+import com.qbao.search.conf.LoadValues;
+import com.qbao.search.logging.ESLogger;
+import com.qbao.search.logging.Loggers;
+import org.elasticsearch.action.bulk.BulkItemResponse;
+import org.elasticsearch.action.bulk.BulkRequestBuilder;
+import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.client.transport.TransportClient;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.transport.client.PreBuiltTransportClient;
+
+import java.net.InetSocketAddress;
+import java.sql.Connection;
+import java.text.SimpleDateFormat;
+import java.util.*;
+
+public class EsDataService {
+
+	private static ESLogger logger = Loggers.getLogger(EsDataService.class);
+	private static EsDataService recommendDataService;
+	private static TransportClient client;
+	private static Connection conn;
+	private static SimpleDateFormat df;
+
+	public static final EsDataService getInstance(){
+		try {
+			if (recommendDataService == null) {
+				synchronized (EsDataService.class) {
+					//-----------------es集群连接--------------------
+					Settings settings = Settings.builder().put("cluster.name", Config.get().get("es.cluster.name")) // 设置集群名
+							.put("client.transport.ignore_cluster_name", true) // 忽略集群名字验证, 打开后集群名字不对也能连接上
+							.build();
+					client = new PreBuiltTransportClient(settings)
+							.addTransportAddress(new InetSocketTransportAddress(new InetSocketAddress(Config.get().get("es.addr"), Config.get().getInt("es.port", 9300))));
+					//-----------------mysql数据库连接--------------------
+//					String driver = "com.mysql.jdbc.Driver";
+//					String user = Config.getBase().get(LoadValues.SEARCHDB_USERNAME).trim();
+//					String pwd = Config.getBase().get(LoadValues.SEARCHDB_PASSWORD).trim();
+//					String url = Config.getBase().get(LoadValues.CONFIG_CONNECTION);
+//					conn = DriverManager.getConnection(url, user, pwd);
+					recommendDataService = new EsDataService();
+					df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+				}
+			}
+		}catch (Exception ex){
+			ex.printStackTrace();
+		}
+		return recommendDataService;
+	}
+
+	/**
+	 * 钱宝日志存放
+	 *
+	 * @param paramMapList 清理过后的日志数据
+	 */
+//	public void saveQbaoLog(Map paramMap) {
+	public void saveQbaoLog(List<Object> paramMapList) {
+		BulkRequestBuilder bulkRequest = client.prepareBulk();
+
+		for (Object object : paramMapList){
+			Map paramMap = JSON.parseObject(object.toString(),Map.class);
+            String logId = UUID.randomUUID().toString();
+            paramMap.put("logId",logId);
+
+            paramMap.forEach((k, v) -> {
+				if (!(v instanceof String))
+					v = JSON.toJSONString(v);
+                paramMap.put(k,v);
+            });
+			bulkRequest.add(client.prepareIndex(LoadValues.QBAO_LOG_INDEX, LoadValues.QBAO_LOG_INDEX).setId(logId).setSource
+					(paramMap));
+		}
+
+		BulkResponse responses = bulkRequest.execute().actionGet();
+		if (responses.hasFailures()){
+			int eRow = 0;
+			BulkItemResponse[] items = responses.getItems();
+			for (BulkItemResponse item : items) {
+				if (item.isFailed()){
+					eRow++;
+					logger.error("log saveQbaoLog error message = {}", item.getFailureMessage());
+				}
+			}
+			logger.info("log saveQbaoLog size = {} error save = {}",paramMapList.size(),eRow);
+		}
+		logger.info("EsDataService.saveQbaoLog");
+	}
+}

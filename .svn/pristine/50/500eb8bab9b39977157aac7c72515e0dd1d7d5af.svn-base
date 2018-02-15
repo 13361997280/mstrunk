@@ -1,0 +1,91 @@
+package data.service;
+
+import com.qbao.search.conf.Config;
+import com.qbao.search.conf.LoadValues;
+import com.qbao.search.logging.ESLogger;
+import com.qbao.search.logging.Loggers;
+import org.elasticsearch.action.bulk.BulkRequestBuilder;
+import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.client.transport.TransportClient;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.index.query.BoolQueryBuilder;
+import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.transport.client.PreBuiltTransportClient;
+
+import java.net.InetSocketAddress;
+import java.util.Date;
+import java.util.Map;
+
+public class SpiderService {
+
+	private static ESLogger logger = Loggers.getLogger(SpiderService.class);
+	private static SpiderService recommendDataService;
+	private static TransportClient client;
+
+	public static final SpiderService getInstance(){
+		try {
+			if (recommendDataService == null) {
+				synchronized (SpiderService.class) {
+					//-----------------es集群连接--------------------
+					Settings settings = Settings.builder().put("cluster.name", Config.get().get("es.cluster.name")) // 设置集群名
+							.put("client.transport.ignore_cluster_name", true) // 忽略集群名字验证, 打开后集群名字不对也能连接上
+							.build();
+					client = new PreBuiltTransportClient(settings)
+							.addTransportAddress(new InetSocketTransportAddress(new InetSocketAddress(Config.get().get("es.addr"), Config.get().getInt("es.port", 9300))));
+					//-----------------mysql数据库连接--------------------
+					recommendDataService = new SpiderService();
+				}
+			}
+		}catch (Exception ex){
+			ex.printStackTrace();
+		}
+		return recommendDataService;
+	}
+
+	/**
+	 * 从文件系统批量导入数据测试程序
+	 * @throws Exception
+	 */
+	public void importEsFromSpider(Map<String,Object> param) throws Exception {
+		try {
+			//开启批量插入
+			BulkRequestBuilder bulkRequest = client.prepareBulk();
+			bulkRequest.add(client.prepareIndex(LoadValues.SPIDER_INDEX, LoadValues.SPIDER_INDEX).setId(param.get("news_id").toString()).setSource(param));
+
+			BulkResponse a = bulkRequest.execute().actionGet();
+			System.out.println(a);
+		}  catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	/**
+	 * 是否存在记录
+	 */
+	public boolean isExist(String id) {
+		BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+		boolQueryBuilder = boolQueryBuilder.must(QueryBuilders.termQuery("_id",id));
+		SearchRequestBuilder requestBuilder = client.prepareSearch()
+				.setIndices(LoadValues.SPIDER_INDEX)
+				.setTypes(LoadValues.SPIDER_INDEX)
+				.setQuery(boolQueryBuilder);
+		SearchResponse response = null;
+		try {
+			response = requestBuilder.execute().get();
+			Long hit = response.getHits().getTotalHits();
+			if(hit.intValue()>0) return true;
+		}catch (Exception ex){
+			ex.printStackTrace();
+		}
+		return true;
+	}
+
+	public static void main(String[] args) throws Exception{
+		System.out.println(getInstance().isExist("a6443885909284421901"));
+
+	}
+
+}

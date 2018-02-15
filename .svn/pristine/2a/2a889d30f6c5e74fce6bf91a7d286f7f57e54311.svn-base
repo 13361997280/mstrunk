@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE configuration
+        PUBLIC "-//mybatis.org//DTD Config 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-config.dtd">
+<configuration>
+
+    <settings>
+        <setting name="callSettersOnNulls" value="true"/>
+        <setting name="mapUnderscoreToCamelCase" value="true"/>
+    </settings>
+
+    <typeAliases>
+        <package name="com.qbao.dao"/>
+    </typeAliases>
+
+    <environments default="oneday">
+        <environment id="oneday">
+            <transactionManager type="JDBC"></transactionManager>
+            <dataSource type="POOLED">
+                <property name="driver" value="${jdbc.driver}"/>
+                <property name="url" value="${oneday.jdbc.url}"/>
+                <property name="username" value="${oneday.jdbc.username}"/>
+                <property name="password" value="${oneday.jdbc.password}"/>
+            </dataSource>
+        </environment>
+        <environment id="bigdata">
+            <transactionManager type="JDBC"></transactionManager>
+            <dataSource type="POOLED">
+                <property name="driver" value="${jdbc.driver}"/>
+                <property name="url" value="${data.jdbc.url}"/>
+                <property name="username" value="${data.jdbc.username}"/>
+                <property name="password" value="${data.jdbc.password}"/>
+            </dataSource>
+        </environment>
+    </environments>
+
+    <mappers>
+        <!--<mapper resource="com/qbao/dao/mapper/UserMapper.xml"/>-->
+        <mapper resource="com/qbao/dao/mapper/TResultOnedayTimeaxisDMapper.xml"/>
+    </mappers>
+</configuration>
+
+

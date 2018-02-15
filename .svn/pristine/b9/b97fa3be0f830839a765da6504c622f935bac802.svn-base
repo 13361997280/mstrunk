@@ -1,0 +1,39 @@
+package com.qbao.search.engine.qbaolog;
+
+import com.alibaba.fastjson.JSON;
+import com.qbao.search.rpc.Server;
+import com.qbao.search.rpc.netty.SimpleHttpRequestHandler;
+import com.qbao.search.util.CommonUtil;
+
+import java.util.Map;
+
+
+/**
+ * 日志请求处理器
+ *
+ * @author song.j
+ * @create 2017-07-11 15:15:37
+ **/
+public class LogHandler extends SimpleHttpRequestHandler<Object> {
+    @Override
+    protected Object doRun() throws Exception {
+        String result = "ok";
+
+//        String jsonParam = new String(httpRequest.getContent().array());
+
+//        Map paramMap = JSON.parseObject(jsonParam, Map.class);
+
+        Map paramMap = CommonUtil.getParamMap(httpRequest);
+
+        LogService logService = new LogService();
+
+        logService.saveLog(paramMap);
+
+        return result;
+    }
+
+    @Override
+    public void setServer(Server server) {
+
+    }
+}

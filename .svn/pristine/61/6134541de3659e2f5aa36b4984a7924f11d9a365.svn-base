@@ -1,0 +1,144 @@
+package data.task;
+
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+import com.qbao.search.conf.Config;
+import com.qbao.search.conf.LoadValues;
+import com.qbao.search.util.HttpClientUtil;
+import data.service.SpiderService;
+import org.apache.commons.httpclient.util.DateUtil;
+import org.apache.commons.lang3.StringUtils;
+import po.NewsPo;
+import us.codecraft.webmagic.Page;
+import us.codecraft.webmagic.Site;
+import us.codecraft.webmagic.Spider;
+import us.codecraft.webmagic.pipeline.ConsolePipeline;
+import us.codecraft.webmagic.pipeline.FilePipeline;
+import us.codecraft.webmagic.pipeline.Pipeline;
+import us.codecraft.webmagic.processor.PageProcessor;
+import us.codecraft.webmagic.scheduler.FileCacheQueueScheduler;
+import us.codecraft.webmagic.scheduler.Scheduler;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+
+
+/**
+ * 抓取今日关注热点新闻
+ * 
+ */
+public class NewLinksProcesser implements PageProcessor {
+
+	private static Site site = Site.me().setDomain("toutiao.com");
+	public NewLinksProcesser() {
+		super();
+		site.setCharset("utf-8");
+	}
+
+	@Override
+	public void process(Page page) {
+		long nowTime = System.currentTimeMillis();
+		// 得到翻页links
+		JSONObject jsonObject = JSON.parseObject(page.getRawText());
+		JSONArray jsonArray = jsonObject.getJSONArray("data");
+		for(int i=0;i<jsonArray.size();i++){
+			JSONObject jsonObject1 = jsonArray.getJSONObject(i);
+			String imageUrl = jsonObject1.getString("image_url");
+			String newsOrigin = jsonObject1.getString("source");
+			String newsUrl = jsonObject1.getString("source_url");
+			String news_type = jsonObject1.getString("chinese_tag");
+			Long hotTime = jsonObject1.getLong("behot_time")*1000;
+			String title = jsonObject1.getString("title");
+			String news_tags = jsonObject1.getString("tag");
+			if(!newsUrl.contains("group")) continue;
+			if(news_type==null||news_type.contains("图片")) continue;
+			newsUrl = newsUrl.substring(0,newsUrl.length()-1);
+			newsUrl = newsUrl.replaceAll("group/","a");
+			String crawl_date_time = DateUtil.formatDate(new Date(),"yyyy-MM-dd HH:mm:ss");
+			String newsId =  newsUrl.substring(newsUrl.lastIndexOf("/") + 1,newsUrl.length());
+			Map<String,Object> ret = new HashMap<String,Object>();
+			ret.put("news_id",newsId);
+			ret.put("image_url",imageUrl);
+			ret.put("news_url",newsUrl);
+			ret.put("news_origin",newsOrigin);
+			ret.put("title",title);
+			ret.put("news_type",news_type);
+			ret.put("news_tags",news_tags);
+			ret.put("crawl_date_time",crawl_date_time);
+			ret.put("hot_time",new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(hotTime)));
+			spiderDetail(ret);
+			if(ret.get("news_time")==null||"".equals(ret.get("news_time"))) continue;
+			if(SpiderService.getInstance().isExist(newsId)) continue;
+			try {
+				SpiderService.getInstance().importEsFromSpider(ret);
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		/*String url = page.getUrl().toString();
+		String hotTime = jsonObject.getJSONObject("next").getString("max_behot_time");
+		int start = url.indexOf("max_behot_time");
+		if(start > 0){
+			if(hotTime.equals("0")){
+				hotTime = System.currentTimeMillis()/1000+"";
+			}
+			url = url.substring(0,start) + "max_behot_time=" + hotTime;
+
+		} else {
+			url = url + "&max_behot_time=" + hotTime;
+		}*/
+		page.addTargetRequest(Config.getBase().get(LoadValues.SPIDER_URL).trim()+"&max_behot_time="+System.currentTimeMillis()/1000);
+		System.out.println("++++++++++++++++++Process page time =   " + (System.currentTimeMillis() - nowTime) + "  data size="+jsonArray.size());
+	}
+	public void spiderDetail(Map<String,Object> ret) {
+		String contentUrl = ret.get("news_url").toString();
+		String hrmlStr = HttpClientUtil.getPage("http://www.toutiao.com"+contentUrl);
+		if (StringUtils.isNotEmpty(hrmlStr)) {
+			NewsPo po = new NewsPo();
+			po.parser(hrmlStr);
+			ret.put("news_website",po.getNews_website());
+			ret.put("news_time",po.getNews_time());
+			ret.put("content",po.getContent());
+			ret.put("content_fenci",po.getContent_fenci());
+			//ret.put("share_num",po.getShare_num());
+			//ret.put("comment_num",po.getComment_num());
+			//ret.put("applause_num",po.getApplause_num());
+		}
+	}
+
+	@Override
+	public Site getSite() {
+		return site;
+	}
+	public static void doProcess(){
+		String[] seedLinks = { Config.getBase().get(LoadValues.SPIDER_URL).trim()+"&max_behot_time="+System.currentTimeMillis()/1000};
+		NewLinksProcesser process = new NewLinksProcesser();
+		String projectPath = Config.getBase().get(LoadValues.SPIDER_FOLDRE).trim();
+		Pipeline filePipe = new FilePipeline(projectPath);
+		Scheduler scheduler = new FileCacheQueueScheduler(projectPath);
+		//Scheduler scheduler = new DelayQueueScheduler(10, TimeUnit.SECONDS);
+		Spider spider = Spider.create(process).setExitWhenComplete(true)
+				.scheduler(scheduler)
+				.addUrl(seedLinks)
+				.addPipeline(filePipe)
+				.addPipeline(new ConsolePipeline())
+				.thread(6);
+		spider.run();
+
+
+	}
+
+	public static void main(String[] args) {
+		//while(true){
+			doProcess();
+		//}
+		//String url = "http://www.toutiao.com/api/pc/feed/?category=news_hot&utm_source=toutiao&widen=1&&tadrequire=true&max_behot_time=1500431481536";
+		//int start = url.indexOf("max_behot_time=");
+		//System.out.println(start);
+		//System.out.println(url.substring(0,start));
+
+	}
+}

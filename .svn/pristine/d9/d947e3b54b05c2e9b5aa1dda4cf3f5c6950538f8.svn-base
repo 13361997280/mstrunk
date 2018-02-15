@@ -1,0 +1,54 @@
+package com.qbao.search.engine.qbaolog;
+
+import data.service.EsDataService;
+import redis.RedisConst;
+import redis.RedisUtil;
+
+import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
+
+/**
+ * @author song.j
+ * @create 2017-07-19 17:17:19
+ **/
+public class QbaoLogJob {
+
+    private int consumeNum = 500;
+
+    private RedisUtil redisUtil = new RedisUtil();
+
+
+    public QbaoLogJob() {
+
+    }
+
+    /**
+     * 10分钟之后执行。每过10分钟执行一次
+     */
+    public void start() {
+        new Timer().scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                System.out.println("qbaolog 定时消费开始");
+                consumeLog();
+                System.out.println("qbaolog 定时消费结束");
+            }
+        },  10 * 60 * 1000, 10 * 60 * 1000);
+    }
+
+
+    private void consumeLog() {
+
+        String key = RedisConst.TEGNRONG_ONEDAY_QBAOLOG_QUEUE.key;
+
+        Long lenght = redisUtil.getlen(key);
+
+        System.out.println("qbaolog 队列长度:" + lenght);
+        for (int i = consumeNum; i < lenght; i+=consumeNum) {
+            List<Object> result = redisUtil.lPipelinePop(RedisConst.TEGNRONG_ONEDAY_QBAOLOG_QUEUE.key, consumeNum);
+            EsDataService.getInstance().saveQbaoLog(result);
+        }
+    }
+
+}

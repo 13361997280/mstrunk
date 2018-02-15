@@ -1,0 +1,464 @@
+package data.service;
+
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
+import com.alibaba.fastjson.TypeReference;
+import com.qbao.search.conf.Config;
+import com.qbao.search.conf.LoadValues;
+import com.qbao.search.logging.ESLogger;
+import com.qbao.search.logging.Loggers;
+import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
+import org.elasticsearch.action.bulk.BulkRequestBuilder;
+import org.elasticsearch.action.bulk.BulkResponse;
+import org.elasticsearch.action.bulk.byscroll.BulkByScrollResponse;
+import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.client.transport.TransportClient;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.index.query.BoolQueryBuilder;
+import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.index.reindex.DeleteByQueryAction;
+import org.elasticsearch.search.SearchHit;
+import org.elasticsearch.search.sort.SortOrder;
+import org.elasticsearch.transport.client.PreBuiltTransportClient;
+import po.NewsDetailPo;
+import po.NewsFrontPo;
+import util.MyCache;
+
+import java.net.InetSocketAddress;
+import java.sql.*;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.Date;
+import java.util.concurrent.ExecutionException;
+
+public class NewsDataService {
+
+	private static ESLogger logger = Loggers.getLogger(NewsDataService.class);
+	private static NewsDataService recommendDataService;
+	private static TransportClient client;
+	private static Connection conn;
+	private static SimpleDateFormat df;
+
+	public static final NewsDataService getInstance(){
+		try {
+			if (recommendDataService == null) {
+				synchronized (NewsDataService.class) {
+					//-----------------es集群连接--------------------
+					Settings settings = Settings.builder().put("cluster.name", Config.get().get("es.cluster.name")) // 设置集群名
+							.put("client.transport.ignore_cluster_name", true) // 忽略集群名字验证, 打开后集群名字不对也能连接上
+							.build();
+					client = new PreBuiltTransportClient(settings)
+							.addTransportAddress(new InetSocketTransportAddress(new InetSocketAddress(Config.get().get("es.addr"), Config.get().getInt("es.port", 9300))));
+					//-----------------mysql数据库连接--------------------
+					String user = Config.getBase().get(LoadValues.SEARCHDB_USERNAME).trim();
+					String pwd = Config.getBase().get(LoadValues.SEARCHDB_PASSWORD).trim();
+					String url = Config.getBase().get(LoadValues.CONFIG_CONNECTION);
+					conn = DriverManager.getConnection(url, user, pwd);
+					recommendDataService = new NewsDataService();
+					df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+				}
+			}
+		}catch (Exception ex){
+			ex.printStackTrace();
+		}
+		return recommendDataService;
+	}
+
+	/**
+	 * 从文件系统批量导入数据测试程序
+	 * @throws Exception
+	 */
+	public void importEsFromSpider(Map<String,Object> param) throws Exception {
+		try {
+			//开启批量插入
+			BulkRequestBuilder bulkRequest = client.prepareBulk();
+			bulkRequest.add(client.prepareIndex(LoadValues.SPIDER_INDEX, LoadValues.SPIDER_INDEX).setId(param.get("news_id").toString()).setSource(param));
+
+			BulkResponse a = bulkRequest.execute().actionGet();
+		}  catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+	}
+	/**
+	 * 保存newsids
+	 * @throws Exception
+	 */
+	public void saveNewsIds(Map<String,Object> param) throws Exception {
+		try {
+			String userId = (String)param.get("userId");
+			String newsIds = (String)param.get("newsIds");
+			BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+			boolQueryBuilder = boolQueryBuilder.should(QueryBuilders.termQuery("_id",userId));
+
+			SearchRequestBuilder requestBuilder = client.prepareSearch()
+					.setIndices(LoadValues.USERIDS_NEWS_INDEX)
+					.setTypes(LoadValues.USERIDS_NEWS_INDEX)
+					.setQuery(boolQueryBuilder);
+			SearchResponse response = requestBuilder.execute().get();
+			SearchHit hit = response.getHits().getHits()[0];
+			JSONObject object = JSON.parseObject(hit.getSourceAsString());
+			String news_ids = object.getString("news_ids");
+			String listId = object.getString("list_id");
+			Map<String,String> param1 = new HashMap<String,String>();
+			param1.put("user_id",userId);
+			if(news_ids!=null&&!"".equals(news_ids)){
+				if(!news_ids.contains(newsIds)) {
+					param1.put("news_ids", news_ids + "," + newsIds);
+				}
+			}else{
+				param1.put("news_ids",newsIds);
+			}
+			if(param1.get("news_ids")!=null&&!"".equals(param1.get("news_ids"))) {
+				param1.put("list_id",listId);
+				BulkRequestBuilder bulkRequest = client.prepareBulk();
+				bulkRequest.add(client.prepareIndex(LoadValues.USERIDS_NEWS_INDEX, LoadValues.USERIDS_NEWS_INDEX).setId(userId).setSource(param1));
+				bulkRequest.execute().actionGet();
+			}
+		}  catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+	}
+	/**
+	 * 保存userids和新闻推荐
+	 * @throws Exception
+	 */
+	public void saveNews(Map<String,Object> param) throws Exception {
+		try {
+			//开启批量插入
+			BulkRequestBuilder bulkRequest = client.prepareBulk();
+			bulkRequest.add(client.prepareIndex(LoadValues.USERIDS_NEWS_INDEX, LoadValues.USERIDS_NEWS_INDEX).setId(param.get("user_id").toString()).setSource(param));
+			bulkRequest.execute().actionGet();
+		}  catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+	}
+	/**
+	 * 保存userids和新闻推荐
+	 * @throws Exception
+	 */
+	public void saveNewsList(Map<String,Object> param) throws Exception {
+		try {
+			//开启批量插入
+			BulkRequestBuilder bulkRequest = client.prepareBulk();
+			bulkRequest.add(client.prepareIndex(LoadValues.NEWS_LIST_INDEX, LoadValues.NEWS_LIST_INDEX).setId(param.get("list_id").toString()).setSource(param));
+			bulkRequest.execute().actionGet();
+		}  catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+	}
+	/**
+	 * 通过userid查询新闻列表
+	 */
+	public JSONObject searchList(String userId) {
+		long timer = new Date().getTime();
+		JSONObject entity = (JSONObject) MyCache.getInstance().get("userid."+userId);
+		if(entity != null) return entity;
+		BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+		boolQueryBuilder = boolQueryBuilder.should(QueryBuilders.termQuery("_id",userId));
+		SearchRequestBuilder requestBuilder = client.prepareSearch()
+				.setIndices(LoadValues.USERIDS_NEWS_INDEX)
+				.setTypes(LoadValues.USERIDS_NEWS_INDEX)
+				.setQuery(boolQueryBuilder);
+		SearchResponse response = null;
+		try {
+			response = requestBuilder.execute().get();
+			SearchHit hit = response.getHits().getHits()[0];
+			JSONObject object = JSON.parseObject(hit.getSourceAsString());
+			String list_id = object.getString("list_id");
+			String news_id = object.getString("news_ids");
+			boolQueryBuilder = QueryBuilders.boolQuery();
+			boolQueryBuilder = boolQueryBuilder.should(QueryBuilders.termQuery("_id",list_id));
+			requestBuilder = client.prepareSearch()
+					.setIndices(LoadValues.NEWS_LIST_INDEX)
+					.setTypes(LoadValues.NEWS_LIST_INDEX)
+					.setQuery(boolQueryBuilder);
+			response = requestBuilder.execute().get();
+			hit = response.getHits().getHits()[0];
+			object = JSON.parseObject(hit.getSourceAsString());
+			LinkedHashMap<String, JSONArray> linkedHashMap =  JSON.parseObject(object.getString("news_list"), new TypeReference< LinkedHashMap<String, JSONArray>>(){});
+			Iterator<Map.Entry<String, JSONArray>> iterator = linkedHashMap.entrySet().iterator();
+			JSONObject jsonObject = new JSONObject(true);
+			while(iterator.hasNext()) {
+				Map.Entry entry = iterator.next();
+				String key = (String) entry.getKey();
+				JSONArray value = (JSONArray)entry.getValue();
+				if(null!=news_id&&!"".equals(news_id)){
+					for(int i=0;i<value.size();i++){
+						JSONObject jsonObject1 = value.getJSONObject(i);
+						String newsId = jsonObject1.getString("newsId");
+						if(news_id.contains(newsId)){
+							jsonObject1.put("thumb",1);
+						}
+					}
+				}
+				jsonObject.put(key,value);
+			}
+			MyCache.getInstance().put("userid."+userId,jsonObject);
+			return jsonObject;
+		}catch (Exception ex){
+			ex.printStackTrace();
+		}finally {
+			String time = (new Date().getTime() - timer) + " ms";
+			logger.info("查询新闻列表所花时间:"+time);
+		}
+		return null;
+	}
+	/**
+	 * 删除索引
+	 */
+	public void deleteIndex(String indexName) {
+		try {
+			DeleteIndexResponse response = client.admin().indices().prepareDelete(indexName).execute().get();
+			logger.info("NewsDataService.deleteIndex",response);
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		} catch (ExecutionException e) {
+			e.printStackTrace();
+		}
+	}
+	/**
+	 * 删除es数据
+	 */
+	public void delete(String indexName,String type) {
+		try {
+			BulkByScrollResponse response = DeleteByQueryAction.INSTANCE.newRequestBuilder(client)
+							.filter(QueryBuilders.matchQuery("_type", type)).source(indexName).get();
+			long deleted = response.getDeleted();
+			logger.info("EsDataService.delete->count",deleted+"");
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * 查询新闻列表
+	 */
+	public List<NewsFrontPo> searchNewsList(String paramStr) {
+		List<NewsFrontPo> returnList = new ArrayList<NewsFrontPo>();
+		BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+		if(paramStr!=null&&!"".equals(paramStr)) {
+			String[] paramStrs = paramStr.split(",");
+			for(String para:paramStrs){
+				boolQueryBuilder = boolQueryBuilder.should(QueryBuilders.queryStringQuery(para).defaultField("news_type"));
+			}
+		}else{
+			boolQueryBuilder.must(QueryBuilders.matchAllQuery());
+		}
+		SearchRequestBuilder requestBuilder = client.prepareSearch()
+				.setIndices(LoadValues.SPIDER_INDEX)
+				.setTypes(LoadValues.SPIDER_INDEX)
+				.setQuery(boolQueryBuilder).addSort("news_time", SortOrder.DESC).addSort("hot_time", SortOrder.DESC);
+		SearchResponse response=null;
+		try {
+			response = requestBuilder.execute().get();
+			NewsFrontPo newsFrontPo;
+			for (SearchHit hit : response.getHits().getHits()) {
+				JSONObject object = JSON.parseObject(hit.getSourceAsString());
+				newsFrontPo = new NewsFrontPo();
+				newsFrontPo.setNewsId(object.getString("news_id"));
+				newsFrontPo.setImageUrl(object.getString("image_url"));
+				newsFrontPo.setNewsType(object.getString("news_type"));
+				newsFrontPo.setTitle(object.getString("title"));
+				returnList.add(newsFrontPo);
+			}
+		}catch (Exception ex){
+			ex.printStackTrace();
+		}
+		return returnList;
+	}
+	/**
+	 * 查询新闻详情
+	 */
+	public NewsDetailPo searchNewsDetail(String newsId) {
+		BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+		boolQueryBuilder = boolQueryBuilder.should(QueryBuilders.termQuery("_id",newsId));
+
+		SearchRequestBuilder requestBuilder = client.prepareSearch()
+				.setIndices(LoadValues.SPIDER_INDEX)
+				.setTypes(LoadValues.SPIDER_INDEX)
+				.setQuery(boolQueryBuilder);
+		SearchResponse response=null;
+		NewsDetailPo newsPo= new NewsDetailPo();
+		try {
+			response = requestBuilder.execute().get();
+			SearchHit hit = response.getHits().getHits()[0];
+			JSONObject object = JSON.parseObject(hit.getSourceAsString());
+			newsPo.setNewsId(object.getString("news_id"));
+			newsPo.setImageUrl(object.getString("image_url"));
+			newsPo.setNewsType(object.getString("news_type"));
+			newsPo.setTitle(object.getString("title"));
+			newsPo.setNewsOrigin(object.getString("news_origin"));
+			newsPo.setContent(object.getString("content"));
+			newsPo.setNewsTags(object.getString("news_tags"));
+		}catch (Exception ex){
+			ex.printStackTrace();
+		}
+		return newsPo;
+	}
+
+	/**
+	 * 保存userId和新闻推荐设置的映射关系
+	 * @return
+     */
+	private void saveUserIdsAndRecommend() {
+		long timer = new Date().getTime();
+		Statement stmt = null;
+		ResultSet rs = null;
+
+		// 用户信息初始化添加
+		try {
+
+			stmt = conn.createStatement();
+			rs = stmt.executeQuery("select id,age_low,age_high,sex,items,`more`,other from reco_config");
+			while (rs.next()) {
+				Integer ageLow = rs.getInt("age_low");
+				Integer id = rs.getInt("id");
+				Integer ageHigh = rs.getInt("age_high");
+				Integer sex = rs.getInt("sex");
+				//保存userId和新闻推荐设置的映射关系
+				Map<String,Object> map = new HashMap<String,Object>();
+				map.put("base_sex",sex+"");
+				map.put("base_age",ageLow+"_"+(ageHigh+1));
+				map.put("const","user_id");
+				JSONObject jsonObject = EsDataService.getInstance().multySearchForEntity(map);
+				//开启批量插入
+				Map<String,Object> map1 = new HashMap<String,Object>();
+				Integer total = jsonObject.getInteger("total");
+				int pageSum = total%5000>0?total/5000+1:total/5000;
+				for(int i=0;i<pageSum;i++){
+					map.put("page",i+1);
+					map.put("size",5000);
+					jsonObject = EsDataService.getInstance().multySearchForEntity(map);
+					JSONArray jsonArray = jsonObject.getJSONArray("items");
+					BulkRequestBuilder bulkRequest = client.prepareBulk();
+					for(int j1=0;j1<jsonArray.size();j1++){
+						JSONObject jsonObject2 = jsonArray.getJSONObject(j1);
+						map1.put("user_id",jsonObject2.getString("user_id"));
+						map1.put("list_id",id);
+						bulkRequest.add(client.prepareIndex(LoadValues.USERIDS_NEWS_INDEX, LoadValues.USERIDS_NEWS_INDEX).setId(map1.get("user_id").toString()).setSource(map1));
+					}
+					bulkRequest.execute().actionGet();
+				}
+			}
+		}catch (Exception ex){
+			ex.printStackTrace();
+			try {
+				conn.close();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			conn = null;
+		}finally {
+			rs = null;
+			stmt = null;
+			String time = (new Date().getTime() - timer) + " ms";
+			logger.info("保存userId和新闻推荐设置的映射关系所花时间:"+time);
+		}
+	}
+	/**
+	 * 保存新闻和新闻推荐的映射关系
+	 * @return
+     */
+	private void saveNewsAndRecommend() {
+		long timer = new Date().getTime();
+		Statement stmt = null;
+		ResultSet rs = null;
+		// 用户信息初始化添加
+		try {
+			stmt = conn.createStatement();
+			rs = stmt.executeQuery("select id,age_low,age_high,sex,items,`more`,other from reco_config");
+			while (rs.next()) {
+				Integer id = rs.getInt("id");
+				//保存新闻和新闻推荐的映射关系
+				Map<String,Object> jsonObject1 = new LinkedHashMap<String,Object>();
+				String items = rs.getString("items");
+				jsonObject1.put("推荐",searchNewsList(items));
+				String more = rs.getString("more");
+				splitType(jsonObject1,more);
+				String other = rs.getString("other");
+				splitType(jsonObject1,other);
+				Map<String,Object> map2 = new HashMap<String,Object>();
+				map2.put("list_id",id+"");
+				JSONObject jsonObject3= new JSONObject(jsonObject1);
+				map2.put("news_list",jsonObject3.toJSONString());
+				saveNewsList(map2);
+			}
+		}catch (Exception ex){
+			ex.printStackTrace();
+			ex.printStackTrace();
+			try {
+				conn.close();
+			} catch (SQLException e1) {
+				e1.printStackTrace();
+			}
+			conn = null;
+		}finally {
+			rs = null;
+			stmt = null;
+			String time = (new Date().getTime() - timer) + " ms";
+			logger.info("保存新闻和新闻推荐的映射关系所花时间:"+time);
+		}
+	}
+
+	private void splitType(Map<String,Object> jsonObject,String splitStr){
+		String[] splitArray = splitStr.split(",");
+		for(int i=0;i<splitArray.length;i++){
+			String split = splitArray[i];
+			jsonObject.put(split,searchNewsList(split));
+		}
+	}
+
+	public static void main(String[] args) throws Exception{
+		long timer = new Date().getTime();
+		//System.out.println(new EsDataService().getKeyword("aa"));
+		//getInstance().update2();
+		//getInstance().testBatchImport("userlabel1","userlabel1");
+		//getInstance().getJsonObjectStrForConst("id","19d34161-425b-4654-a034-06a2ec9aa95d","result","user_label");
+		//getInstance().saveConditionAndResult("userlabel1","user_label");
+		//getInstance().testBatchImportFromFile();
+		//getInstance().testBatchExport();
+
+		//System.out.println(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(1499740774000l)));
+		String cons = "国际,社会,军事";
+		//System.out.println(getInstance().queryLog(map));
+		//getInstance().testBatchExport();
+		getInstance().delete(LoadValues.USERIDS_NEWS_INDEX,LoadValues.USERIDS_NEWS_INDEX);
+		//getInstance().delete(LoadValues.USERIDS_INDEX,LoadVnewsPosalues.USERIDS_INDEX);
+		//getInstance().delete(LoadValues.SPIDER_INDEX,LoadValues.SPIDER_INDEX);
+		//getInstance().delete(LoadValues.LABEL_INDEX,"user_label");
+		//getInstance().searchNewsList(cons);
+		//System.out.println(getInstance().searchNewsDetail("a644129841733566489").toString());
+		getInstance().saveUserIdsAndRecommend();
+		getInstance().saveNewsAndRecommend();
+		//System.out.println(getInstance().searchList("128452754"));
+		//getInstance().delete(LoadValues.LOG_INDEX,LoadValues.LOG_INDEX);
+		//logger.info(getInstance().getUserIds(new String[]{"showList"},new String[]{"2017"}));
+		//getInstance().deleteIndex("result");
+		///logger.info(getInstance().search("e_user_id",2)+"");
+		//logger.info(getInstance().multySearch(new String[]{"base_regit_date"},new String[]{"2017"})+"");
+		///System.out.println(EsDataService.getInstance().getJsonObjectStrForConst("_id","78a22d9c-d0fa-4915-932e-e7c1ef7a9063",LoadValues.GROUP_INDEX,LoadValues.GROUP_INDEX,null));
+		//getInstance().saveLog("11","11","11","11",
+		//		"2017-05-27 10:10:10","11","2017-05-27 10:10:10",
+
+		//System.out.println(getInstance().getUserIds2());
+		//System.out.println("计算标签查询所花时间:"+(new Date().getTime() - timer) + " ms");
+		//timer = new Date().getTime();
+		//System.out.println(getInstance().getUserIds(null));
+		//getInstance().saveLog("11","11","11","11",
+		//		"2017-05-27 10:10:10","11","2017-05-27 10:10:10",
+		//System.out.println("计算标签查询所花时间1:"+(new Date().getTime() - timer) + " ms");
+		//		"1");
+	}
+
+}

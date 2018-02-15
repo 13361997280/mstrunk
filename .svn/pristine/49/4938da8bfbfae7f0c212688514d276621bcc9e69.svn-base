@@ -1,0 +1,40 @@
+package po;
+
+public class NewsFrontPo {
+	private String newsId;
+	private String title;// 新闻标题
+	private String newsType;//新闻类别
+	private String imageUrl;//图片链接
+
+	public String getNewsId() {
+		return newsId;
+	}
+
+	public void setNewsId(String newsId) {
+		this.newsId = newsId;
+	}
+
+	public String getTitle() {
+		return title;
+	}
+
+	public void setTitle(String title) {
+		this.title = title;
+	}
+
+	public String getNewsType() {
+		return newsType;
+	}
+
+	public void setNewsType(String newsType) {
+		this.newsType = newsType;
+	}
+
+	public String getImageUrl() {
+		return imageUrl;
+	}
+
+	public void setImageUrl(String imageUrl) {
+		this.imageUrl = imageUrl;
+	}
+}
